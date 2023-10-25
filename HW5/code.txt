@@ -1,0 +1,158 @@
+# 一、数据介绍
+# hot_or_not:评论情况 
+# type_sv:话题类型 
+# nar_angle:叙事角度 
+# zf_sv:态度倾向 
+# length_log:视频长度(对数) 
+# title_sv:视频标题 
+# media_type:发布者类型 
+# media_fans_log:发布者粉丝数(对数) 
+# type_time_effe:时效性 
+# month1:季节性 
+# love_sv_log:视频点赞数(对数) 
+# com_sv_log:视频评论数(对数)
+
+# 导入所需库
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.model_selection import train_test_split, GridSearchCV, StratifiedKFold
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import AdaBoostClassifier, RandomForestClassifier
+from sklearn.metrics import roc_curve, auc, accuracy_score, confusion_matrix
+
+# 读取数据
+df = pd.read_csv('data.csv')
+
+# 二、分析任务
+
+# 1. 绘制评论量和点赞数的直方图
+sns.set(style='darkgrid')
+fig, axs = plt.subplots(ncols=2, figsize=(12,6))
+sns.histplot(data=df, x='com_sv_log', ax=axs[0], kde=True, color='g')
+sns.histplot(data=df, x='love_sv_log', ax=axs[1], kde=True, color='r')
+axs[0].set(ylabel='Frequency', xlabel='Number of Comments (log scale)', xlim=(-2,8))
+axs[1].set(ylabel='Frequency', xlabel='Number of Likes (log scale)', xlim=(-2,10))
+plt.show()
+
+# 2. 将评论量对数进行分组(>=2为“热议”，<2为“非热议”并将原数据中其他符号 类型变量转化为因子变量
+df['hot_or_not'] = pd.cut(df['com_sv_log'], bins=[-np.inf,2,np.inf], labels=['not hot', 'hot'])
+df['type_sv'] = df['type_sv'].astype('category')
+df['nar_angle'] = df['nar_angle'].astype('category')
+df['zf_sv'] = df['zf_sv'].astype('category')
+df['media_type'] = df['media_type'].astype('category')
+
+# 3. 描述性分析，重点分析视频长度、话题类型、叙事角度、态度倾向这四个自变量对因变量的影响，要求作图+解读
+# 相关系数矩阵
+corr = df[['hot_or_not', 'length_log', 'type_sv', 'nar_angle', 'zf_sv']].corr()
+sns.heatmap(corr, annot=True, cmap='YlGnBu')
+plt.title('Correlation Matrix')
+plt.show()
+
+# 视频长度分布箱线图
+sns.boxplot(x='hot_or_not', y='length_log', data=df)
+plt.title('Boxplot of Length by Hotness')
+plt.show()
+
+# 话题类型对热议视频的影响
+sns.catplot(x='type_sv', hue='hot_or_not', kind='count', data=df, height=5, aspect=2)
+plt.title('Count Plot of Hotness by Topic Type')
+plt.show()
+
+# 叙事角度对热议视频的影响
+sns.catplot(x='nar_angle', hue='hot_or_not', kind='count', data=df, height=5, aspect=2)
+plt.title('Count Plot of Hotness by Narrative Angle')
+plt.show()
+
+# 态度倾向对热议视频的影响
+sns.catplot(x='zf_sv', hue='hot_or_not', kind='count', data=df, height=5, aspect=2)
+plt.title('Count Plot of Hotness by Attitude')
+plt.show()
+
+# 4. 将样本按照8:2比例随机生成训练集和测试集(种子设置为2023)，针对视频是否为热议视频这个分类任务，在训练集上实现决策树、AdaBoost以及随机森林模型(注意:需在训练集上利用五折交叉验证进行参数调优)，最后在测试集上测试三种模型的效果并进行对比，需作出 ROC 曲线图并计算 AUC 并写出模型比较的结果。
+# 数据处理
+X = df.drop(['hot_or_not', 'title_sv'], axis=1)
+y = df['hot_or_not']
+X = pd.get_dummies(X, drop_first=True)
+
+# 划分训练集和测试集
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=2023)
+
+# 决策树模型
+tree_clf = DecisionTreeClassifier(random_state=2023)
+tree_params = {'criterion': ['gini', 'entropy'], 'max_depth': [2, 3, 4, 5]}
+cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=2023)
+tree_grid = GridSearchCV(tree_clf, tree_params, cv=cv, n_jobs=-1, scoring='roc_auc')
+tree_grid.fit(X_train, y_train)
+
+# AdaBoost模型
+ada_clf = AdaBoostClassifier(random_state=2023, base_estimator=DecisionTreeClassifier(max_depth=2))
+ada_params = {'n_estimators': [50, 100, 200], 'learning_rate': [0.01, 0.1, 1]}
+ada_grid = GridSearchCV(ada_clf, ada_params, cv=cv, n_jobs=-1, scoring='roc_auc')
+ada_grid.fit(X_train, y_train)
+
+# 随机森林模型
+rf_clf = RandomForestClassifier(random_state=2023)
+rf_params = {'n_estimators': [50, 100, 200], 'max_depth': [2, 3, 4, 5], 'criterion': ['gini', 'entropy']}
+rf_grid = GridSearchCV(rf_clf, rf_params, cv=cv, n_jobs=-1, scoring='roc_auc')
+rf_grid.fit(X_train, y_train)
+
+# ROC曲线和AUC值比较
+fig, ax = plt.subplots(figsize=(10, 6))
+tree_prob = tree_grid.predict_proba(X_test)[:,1]
+tree_fpr, tree_tpr, _ = roc_curve(y_test, tree_prob)
+tree_roc_auc = auc(tree_fpr, tree_tpr)
+
+ada_prob = ada_grid.predict_proba(X_test)[:,1]
+ada_fpr, ada_tpr, _ = roc_curve(y_test, ada_prob)
+ada_roc_auc = auc(ada_fpr, ada_tpr)
+
+rf_prob = rf_grid.predict_proba(X_test)[:,1]
+rf_fpr, rf_tpr, _ = roc_curve(y_test, rf_prob)
+rf_roc_auc = auc(rf_fpr, rf_tpr)
+
+ax.plot(tree_fpr, tree_tpr, lw=2, alpha=0.8, color='g', label='Decision Tree AUC = %0.2f' % (tree_roc_auc))
+ax.plot(ada_fpr, ada_tpr, lw=2, alpha=0.8, color='r', label='AdaBoost AUC = %0.2f' % (ada_roc_auc))
+ax.plot(rf_fpr, rf_tpr, lw=2, alpha=0.8, color='b', label='Random Forest AUC = %0.2f' % (rf_roc_auc))
+ax.plot([0, 1], [0, 1], linestyle='--', lw=2, color='black', label='Chance', alpha=.8)
+
+ax.set(xlim=[-0.05, 1.05], ylim=[-0.05, 1.05])
+ax.set_title('ROC Curve Comparison')
+ax.set_xlabel('False Positive Rate')
+ax.set_ylabel('True Positive Rate')
+ax.legend(loc="lower right")
+plt.show()
+
+# 模型比较结果
+tree_acc = accuracy_score(y_test, tree_grid.predict(X_test))
+ada_acc = accuracy_score(y_test, ada_grid.predict(X_test))
+rf_acc = accuracy_score(y_test, rf_grid.predict(X_test))
+
+tree_cm = confusion_matrix(y_test, tree_grid.predict(X_test))
+ada_cm = confusion_matrix(y_test, ada_grid.predict(X_test))
+rf_cm = confusion_matrix(y_test, rf_grid.predict(X_test))
+
+# 决策树模型结果
+print('Decision Tree:')
+print('Best Parameters:', tree_grid.best_params_)
+print('AUC:', tree_roc_auc)
+print('Accuracy:', tree_acc)
+print('Confusion Matrix:')
+print(tree_cm)
+
+# AdaBoost模型结果
+print('AdaBoost:')
+print('Best Parameters:', ada_grid.best_params_)
+print('AUC:', ada_roc_auc)
+print('Accuracy:', ada_acc)
+print('Confusion Matrix:')
+print(ada_cm)
+
+# 随机森林模型结果
+print('Random Forest:')
+print('Best Parameters:', rf_grid.best_params_)
+print('AUC:', rf_roc_auc)
+print('Accuracy:', rf_acc)
+print('Confusion Matrix:')
+print(rf_cm)
